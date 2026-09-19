@@ -49,32 +49,52 @@ pub fn show_all(app: &gtk4::Application, backend: Backend, cfg: &Config) {
     let params = Rc::new(RefCell::new(DotParams::from_config(cfg)));
     let mut areas: Vec<gtk4::DrawingArea> = Vec::new();
 
-    match backend {
-        Backend::LayerShell => {
-            // One layer surface per output → dot on every monitor.
-            let monitors: Vec<gtk4::gdk::Monitor> = gtk4::gdk::Display::default()
-                .map(|display| {
-                    let list = display.monitors();
-                    (0..list.n_items())
-                        .filter_map(|i| {
-                            list.item(i).and_then(|o| o.downcast::<gtk4::gdk::Monitor>().ok())
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            if monitors.is_empty() {
-                make_layer_window(app, None, &params, &mut areas);
-            } else {
+    // One window per output on every backend, so the dot sits on every
+    // monitor (the headline behavior, now true for X11 and the XDG fallback
+    // too, not just the layer shell).
+    let monitors = list_monitors();
+    if monitors.is_empty() {
+        // No monitor list (headless or broken display): one generic window
+        // per backend, as before.
+        match backend {
+            Backend::LayerShell => make_layer_window(app, None, &params, &mut areas),
+            Backend::XdgFallback => make_fallback_window(app, None, &params, &mut areas),
+            Backend::X11 => make_x11_window(app, None, 0, &params, &mut areas),
+        }
+    } else {
+        match backend {
+            Backend::LayerShell => {
                 for monitor in &monitors {
                     make_layer_window(app, Some(monitor), &params, &mut areas);
                 }
             }
+            Backend::XdgFallback => {
+                for monitor in &monitors {
+                    make_fallback_window(app, Some(monitor), &params, &mut areas);
+                }
+            }
+            Backend::X11 => {
+                for (index, monitor) in monitors.iter().enumerate() {
+                    make_x11_window(app, Some(monitor), index, &params, &mut areas);
+                }
+            }
         }
-        Backend::XdgFallback => make_fallback_window(app, &params, &mut areas),
-        Backend::X11 => make_x11_window(app, &params, &mut areas),
     }
 
     watch_config_reload(params, areas);
+}
+
+fn list_monitors() -> Vec<gtk4::gdk::Monitor> {
+    gtk4::gdk::Display::default()
+        .map(|display| {
+            let list = display.monitors();
+            (0..list.n_items())
+                .filter_map(|i| {
+                    list.item(i).and_then(|o| o.downcast::<gtk4::gdk::Monitor>().ok())
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn install_transparent_css() {
@@ -162,6 +182,7 @@ fn make_layer_window(
 
 fn make_fallback_window(
     app: &gtk4::Application,
+    monitor: Option<&gtk4::gdk::Monitor>,
     params: &Rc<RefCell<DotParams>>,
     areas: &mut Vec<gtk4::DrawingArea>,
 ) {
@@ -174,7 +195,10 @@ fn make_fallback_window(
     window.set_resizable(false);
     window.set_focusable(false);
     window.set_title(Some("crosshair"));
-    window.fullscreen();
+    match monitor {
+        Some(m) => window.fullscreen_on_monitor(m),
+        None => window.fullscreen(),
+    }
     let area = dot_drawing_area(params, None);
     window.set_child(Some(&area));
     areas.push(area);
@@ -184,6 +208,8 @@ fn make_fallback_window(
 
 fn make_x11_window(
     app: &gtk4::Application,
+    monitor: Option<&gtk4::gdk::Monitor>,
+    index: usize,
     params: &Rc<RefCell<DotParams>>,
     areas: &mut Vec<gtk4::DrawingArea>,
 ) {
@@ -191,16 +217,12 @@ fn make_x11_window(
     window.set_decorated(false);
     window.set_resizable(false);
     window.set_focusable(false);
-    let title = format!("crosshair-{}", std::process::id());
+    // Unique per window, not just per process: x11.rs finds each XID by
+    // title.
+    let title = format!("crosshair-{}-{index}", std::process::id());
     window.set_title(Some(&title));
 
-    // gdk4-rs 0.11 has no primary_monitor — use the first monitor if any.
-    let display = gtk4::gdk::Display::default().expect("crosshair: no GDK display");
-    let monitor: Option<gtk4::gdk::Monitor> = {
-        let list = display.monitors();
-        list.item(0).and_then(|o| o.downcast::<gtk4::gdk::Monitor>().ok())
-    };
-    match &monitor {
+    match monitor {
         Some(m) => window.fullscreen_on_monitor(m),
         None => window.fullscreen(),
     }

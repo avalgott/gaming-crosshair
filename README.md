@@ -66,8 +66,8 @@ cargo install --path .        # optional: puts `crosshair` on your PATH
 | Backend | When | How |
 |---|---|---|
 | Layer shell | Wayland on wlroots (Hyprland/sway), KDE, Mir | `zwlr_layer_shell_v1` overlay layer, one fullscreen transparent surface per monitor. Above every window, including fullscreen ones. |
-| XDG fallback | GNOME Wayland (Mutter has no layer shell) | Plain fullscreen transparent window — above desktop apps, but not above native fullscreen windows (GNOME limitation) |
-| X11 | Xorg, or XWayland games | Fullscreen window + `_NET_WM_STATE_ABOVE` + direct restack every 2 s + empty XShape input region + `WM_HINTS input=false` (never takes focus) |
+| XDG fallback | GNOME Wayland (Mutter has no layer shell) | One fullscreen transparent window per monitor — above desktop apps, but not above native fullscreen windows (GNOME limitation) |
+| X11 | Xorg, or XWayland games | One fullscreen window per monitor + `_NET_WM_STATE_ABOVE` + direct restack every 2 s + empty XShape input region + `WM_HINTS input=false` (never takes focus) |
 
 Backend detection is automatic. To force the X11 backend (e.g. for games
 running in XWayland): `GDK_BACKEND=x11 crosshair --start`.
