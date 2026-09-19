@@ -142,11 +142,13 @@ fn daemonize() -> DaemonReport {
 
     // Daemon: stdio → log file (stdin from /dev/null).
     unsafe { libc::close(fds[0]) };
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(pidfile::log_path())
-        .ok();
+    let log = pidfile::log_path().ok().and_then(|p| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+    });
     let null = std::fs::File::open("/dev/null").ok();
     for (target, source) in [
         (libc::STDIN_FILENO, &null),

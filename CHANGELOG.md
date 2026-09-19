@@ -53,6 +53,11 @@ changes apply instantly without restarting.
   lifetime, so `--stop` can never signal an unrelated process that reused a
   stale PID, and malformed contents (zero, negative, or garbage) are removed
   instead of being interpreted as kill targets
+- Stale PID file cleanup now unlinks while still holding the flock, closing
+  a race where a concurrent `--start` could have its fresh PID file deleted,
+  and the `/tmp` fallback (no `XDG_RUNTIME_DIR`) uses a mode-0700 per-user
+  directory so other users cannot pre-create or symlink the PID and log
+  files
 - Non-ASCII color values now fall back to white instead of crashing startup
   or live reload
 - The X11 and GNOME fallback backends now draw the dot on every monitor,
