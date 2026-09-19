@@ -6,9 +6,15 @@ BenQ, LG). It floats above all windows, is fully click-through, never takes
 focus, and works on any Linux distribution.
 
 ```
-crosshair --start   # show the dot on every monitor
+crosshair --start   # show the dot on every monitor — runs in the background
 crosshair --stop    # remove it
 ```
+
+`--start` double-forks into the background: the terminal returns
+immediately and Ctrl+C has nothing to kill. `crosshair --stop` (from any
+terminal) is the off switch. Startup errors are still shown in the
+terminal; later diagnostics go to `$XDG_RUNTIME_DIR/crosshair.log` (fallback
+`/tmp/crosshair-<uid>.log`).
 
 The dot is 4×4 px, pure white, configurable via
 `~/.config/crosshair/config.toml`:
@@ -98,6 +104,7 @@ focus.
 - Click-through verified on X11 by reading the window's input shape back
   (0 rectangles); on Wayland the same GDK call maps to
   `wl_surface.set_input_region(empty)`
-- `--start` twice → "already running", exit 1; `--stop` → exit 0, PID file
-  removed; `--stop` with nothing running → exit 1; SIGTERM → clean exit,
-  PID file removed
+- `--start` returns in ~30 ms (daemonized) and shows the dot; `--start`
+  twice → "already running", exit 1; `--stop` from any terminal → exit 0,
+  PID file removed; `--stop` with nothing running → exit 1; SIGTERM → clean
+  exit, PID file removed

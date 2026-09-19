@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -8,6 +9,14 @@ pub fn path() -> PathBuf {
     }
     let uid = unsafe { libc::getuid() };
     PathBuf::from(format!("/tmp/crosshair-{uid}.pid"))
+}
+
+/// Path of the log file, next to the PID file. The daemon's stderr goes here
+/// (config warnings, X11 housekeeping errors).
+pub fn log_path() -> PathBuf {
+    let mut p = path();
+    p.set_extension("log");
+    p
 }
 
 /// PID of a live running instance, or None. Stale PID files are removed.
@@ -31,9 +40,37 @@ fn is_alive(pid: i32) -> bool {
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
-/// Write our own PID to the PID file (caller must check running_pid() first).
+/// Write our own PID to the PID file, atomically: the file is created with
+/// O_EXCL, so two racing instances cannot both claim it. A stale file
+/// (dead process) is removed and retried once; a live foreign PID is an
+/// error.
 pub fn claim() -> std::io::Result<()> {
-    std::fs::write(path(), std::process::id().to_string())
+    for _ in 0..2 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path())
+        {
+            Ok(mut file) => {
+                writeln!(file, "{}", std::process::id())?;
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if running_pid().is_some() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        "crosshair is already running",
+                    ));
+                }
+                // running_pid() removed the stale file — retry the create.
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "crosshair is already running",
+    ))
 }
 
 /// --stop: SIGTERM the running instance, wait up to 2 s, report. Returns exit code.
