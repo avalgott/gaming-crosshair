@@ -61,6 +61,10 @@ pub fn load() -> Config {
 /// Parse "#rrggbb" or "#rgb" into 0..1 channel floats. Returns None on bad input.
 pub fn parse_hex_color(s: &str) -> Option<(f64, f64, f64)> {
     let s = s.trim().trim_start_matches('#');
+    // The arms below slice at byte offsets, only sound for ASCII.
+    if !s.is_ascii() {
+        return None;
+    }
     let (r, g, b) = match s.len() {
         6 => (
             u8::from_str_radix(&s[0..2], 16).ok()?,
