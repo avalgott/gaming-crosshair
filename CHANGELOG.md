@@ -47,5 +47,16 @@ changes apply instantly without restarting.
   still print in the terminal; later diagnostics go to
   `$XDG_RUNTIME_DIR/crosshair.log`.
 
+### Fixed
+
+- PID file hardening: the daemon holds an exclusive lock on the file for its
+  lifetime, so `--stop` can never signal an unrelated process that reused a
+  stale PID, and malformed contents (zero, negative, or garbage) are removed
+  instead of being interpreted as kill targets
+- Non-ASCII color values now fall back to white instead of crashing startup
+  or live reload
+- The X11 and GNOME fallback backends now draw the dot on every monitor,
+  matching the layer-shell backend and the README claim
+
 [Unreleased]: https://github.com/avalgott/gaming-crosshair/compare/v0.1.0...HEAD
 [v0.1.0]: https://github.com/avalgott/gaming-crosshair/releases/tag/v0.1.0
