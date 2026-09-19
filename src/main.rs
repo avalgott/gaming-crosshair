@@ -8,14 +8,6 @@ mod x11;
 use clap::Parser;
 use gtk4::gio::prelude::*;
 
-struct PidFileGuard;
-
-impl Drop for PidFileGuard {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(pidfile::path());
-    }
-}
-
 fn main() -> gtk4::glib::ExitCode {
     let cli = cli::Cli::parse();
 
@@ -38,16 +30,16 @@ fn main() -> gtk4::glib::ExitCode {
     // ---- goes to the log file, and Ctrl+C can no longer reach us.
 
     // Startup that the waiting parent must hear about. The PID file is
-    // claimed atomically (O_EXCL) so two racing instances can't both win.
-    let startup: Result<(backend::Backend, config::Config), String> = (|| {
+    // claimed with an exclusive flock so two racing instances can't both win.
+    let startup: Result<(backend::Backend, config::Config, pidfile::PidLock), String> = (|| {
         gtk4::init().map_err(|e| format!("cannot initialize GTK: {e}"))?;
         // GTK must be initialized before backend::detect() probes the layer
         // shell (gtk_layer_is_supported needs gtk_init).
         let backend = backend::detect()?;
-        pidfile::claim().map_err(|e| e.to_string())?;
-        Ok((backend, config::load()))
+        let pid_lock = pidfile::claim().map_err(|e| e.to_string())?;
+        Ok((backend, config::load(), pid_lock))
     })();
-    let (backend, cfg) = match startup {
+    let (backend, cfg, pid_lock) = match startup {
         Ok(ok) => {
             report.ready();
             ok
@@ -56,21 +48,33 @@ fn main() -> gtk4::glib::ExitCode {
     };
 
     // Installed only after a successful claim, so a signal can never remove
-    // someone else's PID file.
+    // someone else's PID file. The handler only stores a flag: nothing
+    // unsafe runs on the signal thread, and the process never exit()s while
+    // the X11 housekeeping threads are mid-flight.
+    static QUIT_REQUESTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     ctrlc::set_handler(|| {
-        let _ = std::fs::remove_file(pidfile::path());
-        std::process::exit(0);
+        QUIT_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
     })
     .expect("crosshair: failed to install signal handler");
 
-    // Removes the PID file on any unwind path (e.g. a panic) as well as on
-    // normal exit. The ctrlc handler above removes it before exit() itself.
-    let _guard = PidFileGuard;
+    // The lock guard removes the PID file (and releases the flock) on any
+    // unwind path, e.g. a panic, as well as on normal exit.
+    let _guard = pid_lock;
 
     let app = gtk4::Application::new(
         Some("com.avalgott.crosshair"),
         gtk4::gio::ApplicationFlags::default(),
     );
+    // Poll the quit flag in the main loop: SIGTERM/SIGINT land as a clean
+    // GTK quit, which tears the windows down and returns from main, so the
+    // guard above removes the PID file on the way out.
+    let quit_app = app.clone();
+    let _quit_source = gtk4::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        if QUIT_REQUESTED.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            quit_app.quit();
+        }
+        gtk4::glib::ControlFlow::Continue
+    });
     app.connect_activate(move |app| {
         overlay::show_all(app, backend, &cfg);
     });
