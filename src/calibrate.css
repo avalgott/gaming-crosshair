@@ -117,7 +117,9 @@ button.calibrate-reset:hover {
     color: #DDE4F2;
 }
 
+/* Esc hint: the subtitle color keeps the 11 px text above the 4.5:1
+   contrast floor against the window background. */
 .calibrate-esc {
     font-size: 11px;
-    color: #767F96;
+    color: #8A93A6;
 }
