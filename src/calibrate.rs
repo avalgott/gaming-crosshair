@@ -120,7 +120,9 @@ fn build_window(app: &gtk4::Application) {
     root.set_margin_start(20);
     root.set_margin_end(20);
 
-    // Header: crosshair chip, then title + subtitle.
+    // Header: crosshair chip, then title + subtitle. The text column takes
+    // the slack, so the "Update available" link (hidden unless a newer
+    // release exists) hugs the right edge.
     let chip = gtk4::Label::new(Some("⊕"));
     chip.add_css_class("calibrate-chip");
     chip.set_halign(gtk4::Align::Start);
@@ -135,12 +137,29 @@ fn build_window(app: &gtk4::Application) {
 
     let header_text = gtk4::Box::new(gtk4::Orientation::Vertical, 6);
     header_text.set_valign(gtk4::Align::Center);
+    header_text.set_hexpand(true);
     header_text.append(&title);
     header_text.append(&subtitle);
+
+    // Placeholder uri (an empty one trips a GLib warning); replaced with
+    // the release page once the version check reports a newer tag. Hidden
+    // widgets take no space, so the no-update case renders as before.
+    // Top-aligned: it sits on the title's line, and its right edge lines
+    // up with the value labels and Reset below (header_text expands, so
+    // the link hugs the content edge).
+    let update_link = gtk4::LinkButton::with_label(
+        "https://github.com/avalgott/gaming-crosshair/releases",
+        "Update available",
+    );
+    update_link.add_css_class("calibrate-update");
+    update_link.set_halign(gtk4::Align::End);
+    update_link.set_valign(gtk4::Align::Start);
+    update_link.set_visible(false);
 
     let header = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
     header.append(&chip);
     header.append(&header_text);
+    header.append(&update_link);
     root.append(&header);
 
     // Horizontal row, its slider, then the vertical pair. Each offset row
@@ -162,10 +181,17 @@ fn build_window(app: &gtk4::Application) {
     scale_y.set_margin_top(8);
     root.append(&scale_y);
 
-    // Bottom: Reset (left) and the Esc hint (right) share a row.
+    // Bottom: the Esc hint (left) and Reset (right) share a row. The hint
+    // expands, pinning Reset to the right edge.
+    let hint_esc = gtk4::Label::new(Some("Esc to close"));
+    hint_esc.add_css_class("calibrate-esc");
+    hint_esc.set_halign(gtk4::Align::Start);
+    hint_esc.set_valign(gtk4::Align::Center);
+    hint_esc.set_hexpand(true);
+
     let reset = gtk4::Button::new();
     reset.add_css_class("calibrate-reset");
-    reset.set_halign(gtk4::Align::Start);
+    reset.set_halign(gtk4::Align::End);
     let reset_icon = gtk4::Label::new(Some("↺"));
     reset_icon.add_css_class("calibrate-reset-icon");
     let reset_text = gtk4::Label::new(Some("Reset"));
@@ -174,16 +200,10 @@ fn build_window(app: &gtk4::Application) {
     reset_box.append(&reset_text);
     reset.set_child(Some(&reset_box));
 
-    let hint_esc = gtk4::Label::new(Some("Esc to close"));
-    hint_esc.add_css_class("calibrate-esc");
-    hint_esc.set_halign(gtk4::Align::End);
-    hint_esc.set_valign(gtk4::Align::Center);
-    hint_esc.set_hexpand(true);
-
     let bottom = gtk4::Box::new(gtk4::Orientation::Horizontal, 12);
     bottom.set_margin_top(24);
-    bottom.append(&reset);
     bottom.append(&hint_esc);
+    bottom.append(&reset);
     root.append(&bottom);
 
     let window = gtk4::ApplicationWindow::new(app);
@@ -245,6 +265,29 @@ fn build_window(app: &gtk4::Application) {
             .set_value(cfg.dot.offset_y.clamp(-100, 100) as f64);
         controls.syncing.set(false);
     }
+
+    // Silent version check: if a newer release exists, show the "Update
+    // available" link pointing at its release notes. The check runs on a
+    // detached thread (never blocking panel startup); the tag travels
+    // through a SendWeakRef, so the widget itself is only ever touched on
+    // the main loop — if the panel closed in the meantime, upgrading the
+    // weak reference yields nothing and the invoke is a no-op. Any
+    // failure — offline, GitHub down, API error — leaves the panel
+    // exactly as built.
+    let link_ref = gtk4::glib::SendWeakRef::from(update_link.downgrade());
+    std::thread::spawn(move || {
+        if let Some(tag) = crate::update::latest_if_newer() {
+            let uri = format!(
+                "https://github.com/avalgott/gaming-crosshair/releases/tag/{tag}"
+            );
+            gtk4::glib::MainContext::default().invoke(move || {
+                if let Some(link) = link_ref.upgrade() {
+                    link.set_uri(&uri);
+                    link.set_visible(true);
+                }
+            });
+        }
+    });
 
     window.present();
 }

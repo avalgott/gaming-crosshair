@@ -8,13 +8,16 @@ focus, and works on any Linux distribution.
 ```
 crosshair --start     # show the dot on every monitor — runs in the background
 crosshair --calibrate # move the dot live with the arrow keys
+crosshair --update    # self-update to the latest release
 crosshair --stop      # remove it
 ```
 
 `--start` double-forks into the background: the terminal returns
 immediately and Ctrl+C has nothing to kill. `--calibrate` detaches the
 same way — the panel is its own process, and Esc (or the close button)
-ends it. `crosshair --stop` (from any terminal) is the off switch.
+ends it. `--update` replaces the binary with the latest GitHub release
+(checksum-verified) — see [Install](#install). `crosshair --stop` (from
+any terminal) is the off switch.
 Startup errors are still shown in the terminal; later diagnostics go to
 `$XDG_RUNTIME_DIR/crosshair.log` (fallback `/tmp/crosshair-<uid>.log`).
 
@@ -69,11 +72,52 @@ screen center, and apply to every monitor.
 - Reset puts the dot back at the true screen center. Esc closes the window,
   which ends the panel process.
 
-## Requirements
+## Install
 
+Paste this into a terminal — no sudo, everything installs as your user:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/avalgott/gaming-crosshair/main/install.sh | sh
+```
+
+The script downloads the CI-built binary of the latest release to
+`~/.local/bin` (set `CROSSHAIR_INSTALL_DIR` to pick another directory),
+verifies its SHA-256 checksum, and smoke-tests it. If `~/.local/bin` is
+not on your PATH it says so — add it with
+`export PATH="$HOME/.local/bin:$PATH"` if you want plain `crosshair` to
+work. It is a small script; download and read it before piping if you
+prefer.
+
+To update to the latest release at any time:
+
+```
+crosshair --update
+```
+
+It downloads the new binary, verifies its checksum, and atomically
+replaces itself; a running overlay is stopped and restarted
+automatically. The calibration panel also shows an "Update available"
+link when a newer release exists — and nothing at all otherwise
+(offline, GitHub down, already current).
+
+To remove crosshair completely:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/avalgott/gaming-crosshair/main/uninstall.sh | sh
+```
+
+Stops the overlay, removes the binary and `~/.config/crosshair`
+(`XDG_CONFIG_HOME` is honored).
+
+The prebuilt binary needs a system GTK4 (≥ 4.10) and gtk4-layer-shell —
+the same runtime libraries the source build needs — and glibc ≥ 2.39 on
+x86_64 (CI builds on Ubuntu 24.04).
+
+## Building from source
+
+- Rust toolchain ≥ 1.92
 - GTK4 (≥ 4.22 tested) and gtk4-layer-shell (≥ 1.3 tested), both provided by
   the system package manager
-- Rust toolchain ≥ 1.92
 
 ```bash
 cargo build --release

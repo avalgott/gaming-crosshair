@@ -27,6 +27,20 @@ window {
     color: #8A93A6;
 }
 
+/* Update link: the chip's accent keeps it on-palette; the built-in link
+   styling keeps the underline and hover affordance. Adwaita buttons carry
+   a ~28px min-height and generous padding; stripped here so the link hugs
+   its text and lines up with the title above it and the value-label edge
+   below it (the button itself is flush with the content edge; its text
+   ends exactly there). */
+button.link.calibrate-update {
+    font-size: 11px;
+    color: #8FA6DE;
+    min-height: 0;
+    min-width: 0;
+    padding: 0;
+}
+
 /* Offset rows: dim axis glyph, light name, and the bright value at the
    right end. */
 .calibrate-glyph {

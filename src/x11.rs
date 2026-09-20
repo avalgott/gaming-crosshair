@@ -67,10 +67,10 @@ fn find_by_title<C: Connection>(conn: &C, win: Window, atoms: &[u32], want: &str
     let tree = conn.query_tree(win).ok()?.reply().ok()?;
     for &child in &tree.children {
         for &atom in atoms {
-            if let Some(t) = window_title(conn, child, atom) {
-                if t == want {
-                    return Some(child);
-                }
+            if let Some(t) = window_title(conn, child, atom)
+                && t == want
+            {
+                return Some(child);
             }
         }
         if let Some(found) = find_by_title(conn, child, atoms, want) {

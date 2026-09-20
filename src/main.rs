@@ -4,6 +4,7 @@ mod cli;
 mod config;
 mod overlay;
 mod pidfile;
+mod update;
 mod x11;
 
 use clap::Parser;
@@ -11,6 +12,19 @@ use gtk4::gio::prelude::*;
 
 fn main() -> gtk4::glib::ExitCode {
     let cli = cli::Cli::parse();
+
+    if cli.update {
+        // Plain download-and-replace flow: no GTK, no fork. The overlay is
+        // stopped only after the new binary is verified, then restarted, so
+        // an update never leaves the user without a dot.
+        return match update::run() {
+            Ok(()) => gtk4::glib::ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("crosshair: update failed: {e}");
+                gtk4::glib::ExitCode::FAILURE
+            }
+        };
+    }
 
     if cli.calibrate {
         // Start the overlay before detaching: --start can take a few
