@@ -16,4 +16,8 @@ pub struct Cli {
     /// Stop a running crosshair instance
     #[arg(long)]
     pub stop: bool,
+
+    /// Open the calibration panel to move the dot live
+    #[arg(long, conflicts_with_all = ["start", "stop"])]
+    pub calibrate: bool,
 }

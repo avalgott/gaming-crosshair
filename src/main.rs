@@ -1,4 +1,5 @@
 mod backend;
+mod calibrate;
 mod cli;
 mod config;
 mod overlay;
@@ -10,6 +11,24 @@ use gtk4::gio::prelude::*;
 
 fn main() -> gtk4::glib::ExitCode {
     let cli = cli::Cli::parse();
+
+    if cli.calibrate {
+        // Start the overlay before detaching: --start can take a few
+        // seconds on a slow machine, and letting it run inside the panel's
+        // own readiness window could exhaust the deadline. A failure here
+        // ends the command with the error visible in the terminal.
+        if let Err(e) = calibrate::ensure_daemon() {
+            eprintln!("crosshair: could not start the overlay: {e}");
+            std::process::exit(1);
+        }
+        // Detach like --start, so the terminal returns as soon as the panel
+        // is up. The panel is then its own process: Esc (or the close
+        // button) closes the window, the application quits, and the process
+        // ends itself. Startup errors reach the terminal the same way
+        // --start's do, through the readiness report.
+        let report = daemonize();
+        return calibrate::run(report);
+    }
 
     if cli.stop {
         std::process::exit(pidfile::stop());
@@ -160,27 +179,40 @@ fn daemonize() -> DaemonReport {
         }
     }
 
-    DaemonReport { fd: fds[1] }
+    DaemonReport {
+        fd: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(fds[1])),
+    }
 }
 
 /// Write end of the startup pipe: reports "R" (ready) or "E:<error>" to the
-/// waiting original process.
+/// waiting original process. The fd is taken (swap) and closed exactly once,
+/// no matter how many clones exist or how many times ready()/fail() is
+/// called, so a repeated call can never write to or close an unrelated fd
+/// that was reused in the meantime.
+#[derive(Clone)]
 struct DaemonReport {
-    fd: i32,
+    fd: std::sync::Arc<std::sync::atomic::AtomicI32>,
 }
 
 impl DaemonReport {
     fn ready(&self) {
-        let _ = unsafe { libc::write(self.fd, b"R".as_ptr() as *const _, 1) };
-        unsafe { libc::close(self.fd) };
+        let fd = self.fd.swap(-1, std::sync::atomic::Ordering::SeqCst);
+        if fd < 0 {
+            return;
+        }
+        let _ = unsafe { libc::write(fd, b"R".as_ptr() as *const _, 1) };
+        unsafe { libc::close(fd) };
     }
 
     fn fail(&self, msg: &str) -> ! {
-        let text = format!("E:{msg}");
-        let _ = unsafe {
-            libc::write(self.fd, text.as_ptr() as *const _, text.len())
-        };
-        unsafe { libc::close(self.fd) };
+        let fd = self.fd.swap(-1, std::sync::atomic::Ordering::SeqCst);
+        if fd >= 0 {
+            let text = format!("E:{msg}");
+            let _ = unsafe {
+                libc::write(fd, text.as_ptr() as *const _, text.len())
+            };
+            unsafe { libc::close(fd) };
+        }
         std::process::exit(1);
     }
 }
