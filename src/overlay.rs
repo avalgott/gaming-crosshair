@@ -176,7 +176,7 @@ fn make_layer_window(
     let area = dot_drawing_area(params, monitor_size);
     window.set_child(Some(&area));
     areas.push(area);
-    window.connect_map(|w| apply_empty_input_region(w));
+    window.connect_map(apply_empty_input_region);
     window.present();
 }
 
@@ -202,7 +202,7 @@ fn make_fallback_window(
     let area = dot_drawing_area(params, None);
     window.set_child(Some(&area));
     areas.push(area);
-    window.connect_map(|w| apply_empty_input_region(w));
+    window.connect_map(apply_empty_input_region);
     window.present();
 }
 
