@@ -19,6 +19,24 @@ const API_URL: &str = "https://api.github.com/repos/avalgott/gaming-crosshair/re
 const DL_BASE: &str = "https://github.com/avalgott/gaming-crosshair/releases/download";
 const USER_AGENT: &str = concat!("crosshair/", env!("CARGO_PKG_VERSION"));
 
+/// Removes the temp download on drop unless disarmed. Covers every early
+/// exit — download errors, checksum mismatch, chmod/rename failure, stop
+/// timeout — so repeated failures (ENOSPC, for one) never accumulate
+/// `.crosshair.new.<pid>` files.
+struct TmpGuard(PathBuf);
+
+impl TmpGuard {
+    fn disarm(self) {
+        std::mem::forget(self);
+    }
+}
+
+impl Drop for TmpGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Entry point for `crosshair --update`. Errors are printed by main.
 pub fn run() -> Result<(), String> {
     let exe = current_exe_path()?;
@@ -43,23 +61,51 @@ pub fn run() -> Result<(), String> {
     // only downtime.
     let tmp = exe.with_file_name(format!(".crosshair.new.{}", std::process::id()));
     download_and_verify(&agent, &tag, &tmp)?;
+    let tmp_guard = TmpGuard(tmp.clone());
+
+    // Rollback safety net, taken while the daemon still runs: a hardlink
+    // to the old binary (same inode, no copy). If anything fails after the
+    // stop, the previous binary is restored and the overlay brought back.
+    let backup = exe.with_file_name(format!(".crosshair.old.{}", std::process::id()));
+    std::fs::hard_link(&exe, &backup)
+        .map_err(|e| format!("cannot back up {}: {e}", exe.display()))?;
 
     let was_running = match crate::pidfile::stop_daemon() {
         Ok(()) => true,
         Err(crate::pidfile::StopError::NotRunning) => false,
         Err(crate::pidfile::StopError::Timeout(pid)) => {
-            let _ = std::fs::remove_file(&tmp);
+            let _ = std::fs::remove_file(&backup);
             return Err(format!(
                 "refusing to replace the binary while the overlay (pid {pid}) ignores SIGTERM"
             ));
         }
     };
 
-    install_in_place(&tmp, &exe)?;
-
-    if was_running {
-        restart(&exe, &tag)?;
+    if let Err(e) = install_in_place(&tmp, &exe) {
+        // rename is atomic, so exe still holds the old binary: restore the
+        // overlay on it and drop the backup.
+        let _ = std::fs::remove_file(&backup);
+        if was_running {
+            let _ = restart(&exe);
+        }
+        return Err(e);
     }
+    tmp_guard.disarm();
+
+    if was_running && let Err(e) = restart(&exe) {
+        // The new binary failed to bring the overlay up: roll the old one
+        // back into place and restart on it.
+        let _ = std::fs::rename(&backup, &exe);
+        if restart(&exe).is_ok() {
+            return Err(format!(
+                "the new binary failed to restart the overlay ({e}); rolled back and the overlay is running again"
+            ));
+        }
+        return Err(format!(
+            "the new binary failed to restart the overlay ({e}); rolled back, but the overlay still could not start; run `crosshair --start`"
+        ));
+    }
+    let _ = std::fs::remove_file(&backup);
     println!("crosshair updated to {tag} (SHA-256 verified)");
     Ok(())
 }
@@ -163,31 +209,29 @@ fn fetch_latest(agent: &ureq::Agent) -> Result<String, String> {
     Ok(tag)
 }
 
-/// Compare two versions by their first three dot-separated numeric
-/// components (leading v/V stripped). Prerelease suffixes (v0.3.0-rc1)
-/// compare by number only, so -rc and the final release count as equal:
-/// `releases/latest` never surfaces prereleases or drafts anyway, so only
-/// hand-rolled tags could hit this.
+/// Compare two versions as SemVer triples: leading v/V stripped, missing
+/// components read as 0 (so `1.2 == 1.2.0`), a prerelease suffix (-rc1,
+/// -beta...) counts as older than the plain release. `releases/latest`
+/// never surfaces prereleases, so the prerelease rule is a safety net for
+/// hand-rolled tags.
 fn version_cmp(a: &str, b: &str) -> Result<std::cmp::Ordering, String> {
-    let parse = |s: &str| -> Result<Vec<u64>, String> {
-        let s = s.trim().trim_start_matches(['v', 'V']);
-        let mut parts = Vec::with_capacity(3);
-        for part in s.split('.') {
-            if parts.len() == 3 {
-                break;
-            }
+    fn parse(s: &str) -> Result<([u64; 3], bool), String> {
+        let core = s.trim().trim_start_matches(['v', 'V']);
+        let pre = core.contains('-');
+        let core = core.split('-').next().unwrap_or("");
+        let mut parts = [0u64; 3];
+        for (i, part) in core.split('.').take(3).enumerate() {
             let num: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
             if num.is_empty() {
-                break;
+                return Err(format!("invalid version {s:?}"));
             }
-            parts.push(num.parse().map_err(|_| format!("invalid version {s:?}"))?);
+            parts[i] = num.parse().map_err(|_| format!("invalid version {s:?}"))?;
         }
-        if parts.is_empty() {
-            return Err(format!("invalid version {s:?}"));
-        }
-        Ok(parts)
-    };
-    Ok(parse(a)?.cmp(&parse(b)?))
+        Ok((parts, pre))
+    }
+    let (a_parts, a_pre) = parse(a)?;
+    let (b_parts, b_pre) = parse(b)?;
+    Ok(a_parts.cmp(&b_parts).then_with(|| b_pre.cmp(&a_pre)))
 }
 
 /// Download the new binary and its checksum sidecar, verify, and write the
@@ -279,14 +323,54 @@ fn install_in_place(tmp: &Path, exe: &Path) -> Result<(), String> {
 
 /// Bring the overlay back after the swap. The new binary detaches itself
 /// like any --start; status() waits for the original process, which exits
-/// 0 only once the daemon holds the PID file.
-fn restart(exe: &Path, tag: &str) -> Result<(), String> {
-    let detail = match std::process::Command::new(exe).arg("--start").status() {
-        Ok(status) if status.success() => return Ok(()),
-        Ok(status) => status.to_string(),
-        Err(e) => e.to_string(),
-    };
-    Err(format!(
-        "the binary was updated to {tag} but the overlay failed to restart ({detail}); run `crosshair --start`"
-    ))
+/// 0 only once the daemon holds the PID file. Errors carry the raw detail;
+/// callers add the context (the advice differs after a rollback).
+fn restart(exe: &Path) -> Result<(), String> {
+    match std::process::Command::new(exe).arg("--start").status() {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("--start exited with {status}")),
+        Err(e) => Err(format!("cannot spawn --start: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::version_cmp;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn numeric_not_lexicographic() {
+        assert_eq!(version_cmp("0.10.0", "0.9.0").unwrap(), Ordering::Greater);
+        assert_eq!(version_cmp("0.9.0", "0.10.0").unwrap(), Ordering::Less);
+    }
+
+    #[test]
+    fn missing_components_read_as_zero() {
+        assert_eq!(version_cmp("1.2", "1.2.0").unwrap(), Ordering::Equal);
+        assert_eq!(version_cmp("v1", "1.0.0").unwrap(), Ordering::Equal);
+        assert_eq!(version_cmp("V1.2.3", "1.2.3").unwrap(), Ordering::Equal);
+    }
+
+    #[test]
+    fn prerelease_is_older_than_release() {
+        assert_eq!(version_cmp("1.2.0-rc1", "1.2.0").unwrap(), Ordering::Less);
+        assert_eq!(version_cmp("1.2.0", "1.2.0-rc1").unwrap(), Ordering::Greater);
+        assert_eq!(
+            version_cmp("1.2.0-rc1", "1.2.0-rc2").unwrap(),
+            Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn plain_ordering() {
+        assert_eq!(version_cmp("0.2.0", "0.3.0").unwrap(), Ordering::Less);
+        assert_eq!(version_cmp("0.3.0", "0.2.0").unwrap(), Ordering::Greater);
+        assert_eq!(version_cmp("0.2.0", "0.2.0").unwrap(), Ordering::Equal);
+    }
+
+    #[test]
+    fn rejects_garbage() {
+        assert!(version_cmp("garbage", "1.0.0").is_err());
+        assert!(version_cmp("1..0", "1.0.0").is_err());
+    }
 }

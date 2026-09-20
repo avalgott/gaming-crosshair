@@ -42,19 +42,17 @@ fn dir() -> std::io::Result<PathBuf> {
 }
 
 /// Candidate directories for the PID and log files. --update (and --stop)
-/// may run in an environment that lost XDG_RUNTIME_DIR (cron, ssh,
-/// systemd-run), so probe every place a daemon could have put its PID
-/// file. /run/user/<uid> is the conventional runtime dir on systemd
-/// systems and covers the case where the daemon had XDG_RUNTIME_DIR and we
-/// do not; a non-standard XDG_RUNTIME_DIR in the daemon's environment
-/// cannot be guessed, and is the one gap.
+/// may run in an environment different from the daemon's (cron, ssh,
+/// systemd-run, a custom XDG_RUNTIME_DIR), so probe every place a daemon
+/// could have put its PID file: the current runtime dir when set, always
+/// the conventional /run/user/<uid>, and the /tmp fallback.
 fn dirs() -> impl Iterator<Item = PathBuf> {
     let uid = unsafe { libc::getuid() };
     let mut dirs = Vec::with_capacity(3);
-    match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(runtime) => dirs.push(PathBuf::from(runtime)),
-        None => dirs.push(PathBuf::from(format!("/run/user/{uid}"))),
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+        dirs.push(PathBuf::from(runtime));
     }
+    dirs.push(PathBuf::from(format!("/run/user/{uid}")));
     dirs.push(PathBuf::from(format!("/tmp/crosshair-{uid}")));
     dirs.dedup();
     dirs.into_iter()

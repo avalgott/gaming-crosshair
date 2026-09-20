@@ -9,19 +9,29 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # Pinned: the README promises binaries built on Ubuntu 24.04 (glibc
+    # 2.39); a floating ubuntu-latest would silently raise that floor.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Verify tag matches package version
+        # A mismatched tag would publish a binary that reports the old
+        # version (perpetual update prompts). Fail before any build work.
+        run: grep -q "^version = \"${GITHUB_REF_NAME#v}\"" Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev meson ninja-build wayland-protocols pkg-config
       - name: Build gtk4-layer-shell from source (not packaged in noble)
+        # Pinned to the v1.0.4 commit and digest-verified: a moved tag or a
+        # compromised archive must not reach the sudo install step.
         run: |
-          curl -fsSLo ls.tar.gz https://github.com/wmww/gtk4-layer-shell/archive/refs/tags/v1.0.4.tar.gz
-          tar xzf ls.tar.gz
-          meson setup build gtk4-layer-shell-1.0.4 --prefix=/usr \
+          curl -fsSLo ls.tar.gz https://github.com/wmww/gtk4-layer-shell/archive/536ff516ed68b9bb34afc4c07f942a54b2b4b03f.tar.gz
+          echo "f4c4fd455f5605c7b93b305b6be28990f0f7170968fb2714bf362477f918c4bc  ls.tar.gz" | sha256sum -c
+          mkdir source
+          tar xzf ls.tar.gz -C source --strip-components=1
+          meson setup build source --prefix=/usr \
             -Dintrospection=false -Dvapi=false -Dexamples=false
           sudo meson install -C build
       - name: Build release binary

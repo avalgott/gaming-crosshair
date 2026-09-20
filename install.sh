@@ -7,6 +7,13 @@ set -eu
 INSTALL_DIR=${CROSSHAIR_INSTALL_DIR:-"$HOME/.local/bin"}
 DL_BASE=${CROSSHAIR_DL_BASE:-"https://github.com/avalgott/gaming-crosshair/releases/latest/download"}
 
+# Only x86_64 binaries are published; anything else would install a file
+# that cannot execute, and the smoke test would then wrongly blame GTK.
+if [ "$(uname -m)" != "x86_64" ]; then
+    echo "crosshair publishes x86_64 binaries only; this machine is $(uname -m)" >&2
+    exit 1
+fi
+
 mkdir -p "$INSTALL_DIR"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' 0 1 2 15
