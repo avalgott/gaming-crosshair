@@ -5,7 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.2.0] - 2026-09-20
+
+### Summary
+
+Second release: a calibration panel (`crosshair --calibrate`) that moves
+the dot while it stays live on every monitor. Arrow keys nudge one
+logical pixel per press, sliders cover the ±100 px fine range, and Reset
+recenters. It runs detached like `--start`, starts the overlay if none is
+running, and Esc closes the window, ending the panel's own process.
 
 ### Added
 
@@ -76,5 +84,5 @@ changes apply instantly without restarting.
 - The X11 and GNOME fallback backends now draw the dot on every monitor,
   matching the layer-shell backend and the README claim
 
-[Unreleased]: https://github.com/avalgott/gaming-crosshair/compare/v0.1.0...HEAD
+[v0.2.0]: https://github.com/avalgott/gaming-crosshair/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/avalgott/gaming-crosshair/releases/tag/v0.1.0
