@@ -5,6 +5,52 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.3.0] - 2026-09-20
+
+### Summary
+
+Third release: installation, uninstallation, and self-update. A
+paste-and-run script installs the CI-built release binary to
+`~/.local/bin` with SHA-256 verification, `crosshair --update` replaces
+the installed binary with the latest verified release (rolling back to
+the previous binary if the overlay fails to restart), and the
+calibration panel shows an "Update available" link when a newer release
+exists.
+
+### Added
+
+- `install.sh` one-liner (`curl -fsSL ... | sh`): installs the latest
+  CI-built binary to `~/.local/bin` (no sudo), verifies it against the
+  published SHA-256 sidecar, checks that the destination is on PATH, and
+  smoke-tests `--version` (which doubles as a GTK4 runtime check).
+  `CROSSHAIR_INSTALL_DIR` overrides the destination, and non-x86_64 hosts
+  are refused with a clear message.
+- `uninstall.sh`: stops the overlay, then removes the binary and the
+  config. If the overlay ignores the stop signal (SIGTERM timeout) it
+  aborts instead of deleting files, so a live daemon is never left
+  executing a deleted binary.
+- `crosshair --update`: checks GitHub for the latest release, downloads
+  the binary and its checksum sidecar, and verifies before touching the
+  running overlay. The swap is an atomic rename, and a hardlink backup
+  rolls the previous binary back if the new one fails to restart the
+  overlay; the overlay is stopped and restarted automatically, and the
+  up-to-date case exits 0. PID file probing now covers `/run/user/<uid>`
+  alongside `$XDG_RUNTIME_DIR` and `/tmp`, so updates work from cron,
+  ssh, and other environments without the session variables.
+- Release CI (`.github/workflows/release.yml`): on every `v*` tag, builds
+  the binary on Ubuntu 24.04 (gtk4-layer-shell v1.0.4 compiled from a
+  pinned, digest-verified source archive), fails unless the tag matches
+  the package version, and attaches `crosshair` + `crosshair.sha256` to
+  the release.
+- The calibration panel shows an "Update available" link when a newer
+  release exists (silent on any failure), and its footer now reads Esc on
+  the left and Reset on the right.
+
+### Fixed
+
+- Clippy warnings in the overlay and X11 backends (redundant closures,
+  collapsible if).
+
 ## [v0.2.0] - 2026-09-20
 
 ### Summary
@@ -84,5 +130,6 @@ changes apply instantly without restarting.
 - The X11 and GNOME fallback backends now draw the dot on every monitor,
   matching the layer-shell backend and the README claim
 
+[v0.3.0]: https://github.com/avalgott/gaming-crosshair/releases/tag/v0.3.0
 [v0.2.0]: https://github.com/avalgott/gaming-crosshair/releases/tag/v0.2.0
 [v0.1.0]: https://github.com/avalgott/gaming-crosshair/releases/tag/v0.1.0
