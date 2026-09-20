@@ -17,7 +17,7 @@ jobs:
       - name: Verify tag matches package version
         # A mismatched tag would publish a binary that reports the old
         # version (perpetual update prompts). Fail before any build work.
-        run: grep -q "^version = \"${GITHUB_REF_NAME#v}\"" Cargo.toml
+        run: grep -q "^version = \"${GITHUB_REF_NAME#v}\"$" Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
       - name: Install system dependencies
         run: |

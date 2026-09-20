@@ -209,16 +209,19 @@ fn fetch_latest(agent: &ureq::Agent) -> Result<String, String> {
     Ok(tag)
 }
 
-/// Compare two versions as SemVer triples: leading v/V stripped, missing
-/// components read as 0 (so `1.2 == 1.2.0`), a prerelease suffix (-rc1,
-/// -beta...) counts as older than the plain release. `releases/latest`
-/// never surfaces prereleases, so the prerelease rule is a safety net for
-/// hand-rolled tags.
+/// Compare two versions as SemVer: leading v/V stripped, missing numeric
+/// components read as 0 (so `1.2 == 1.2.0`), and prerelease suffixes
+/// ordered per the SemVer precedence rules (`-rc1 < -rc2`, numeric
+/// identifiers before alphanumeric ones, a plain release above any
+/// prerelease). `releases/latest` never surfaces prereleases, so the
+/// prerelease rules are a safety net for hand-rolled tags.
 fn version_cmp(a: &str, b: &str) -> Result<std::cmp::Ordering, String> {
-    fn parse(s: &str) -> Result<([u64; 3], bool), String> {
+    fn parse(s: &str) -> Result<([u64; 3], Option<String>), String> {
         let core = s.trim().trim_start_matches(['v', 'V']);
-        let pre = core.contains('-');
-        let core = core.split('-').next().unwrap_or("");
+        let (core, pre) = match core.split_once('-') {
+            Some((c, p)) => (c, Some(p.to_string())),
+            None => (core, None),
+        };
         let mut parts = [0u64; 3];
         for (i, part) in core.split('.').take(3).enumerate() {
             let num: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -231,7 +234,48 @@ fn version_cmp(a: &str, b: &str) -> Result<std::cmp::Ordering, String> {
     }
     let (a_parts, a_pre) = parse(a)?;
     let (b_parts, b_pre) = parse(b)?;
-    Ok(a_parts.cmp(&b_parts).then_with(|| b_pre.cmp(&a_pre)))
+    Ok(a_parts.cmp(&b_parts).then_with(|| cmp_pre(a_pre.as_deref(), b_pre.as_deref())))
+}
+
+/// SemVer prerelease precedence: no prerelease sorts after any prerelease;
+/// otherwise dot-separated identifiers compare pairwise — all-numeric ones
+/// numerically (numeric sorts before alphanumeric), and a shorter list
+/// that is a prefix of a longer one sorts first (`-alpha < -alpha.1`).
+fn cmp_pre(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
+    match (a, b) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (Some(a), Some(b)) => {
+            let mut a_ids = a.split('.');
+            let mut b_ids = b.split('.');
+            loop {
+                match (a_ids.next(), b_ids.next()) {
+                    (None, None) => return std::cmp::Ordering::Equal,
+                    (None, Some(_)) => return std::cmp::Ordering::Less,
+                    (Some(_), None) => return std::cmp::Ordering::Greater,
+                    (Some(x), Some(y)) => match cmp_ident(x, y) {
+                        std::cmp::Ordering::Equal => {}
+                        other => return other,
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// One prerelease identifier: numeric ones compare by value (length first,
+/// so the comparison cannot overflow), numeric sorts before alphanumeric,
+/// alphanumeric compares as ASCII text.
+fn cmp_ident(a: &str, b: &str) -> std::cmp::Ordering {
+    let a_num = a.bytes().all(|c| c.is_ascii_digit());
+    let b_num = b.bytes().all(|c| c.is_ascii_digit());
+    match (a_num, b_num) {
+        (true, true) => a.len().cmp(&b.len()).then_with(|| a.cmp(b)),
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        (false, false) => a.cmp(b),
+    }
 }
 
 /// Download the new binary and its checksum sidecar, verify, and write the
@@ -251,9 +295,13 @@ fn download_and_verify(agent: &ureq::Agent, tag: &str, dest: &Path) -> Result<()
     }
     let mut file = File::create(dest)
         .map_err(|e| format!("cannot create {}: {e}", dest.display()))?;
-    file.write_all(&bin)
-        .and_then(|()| file.sync_all())
-        .map_err(|e| format!("cannot write {}: {e}", dest.display()))
+    if let Err(e) = file.write_all(&bin).and_then(|()| file.sync_all()) {
+        // A partial write (ENOSPC, for one) must not survive: the guard
+        // only exists once this function returns Ok.
+        let _ = std::fs::remove_file(dest);
+        return Err(format!("cannot write {}: {e}", dest.display()));
+    }
+    Ok(())
 }
 
 fn download_bytes(agent: &ureq::Agent, url: &str) -> Result<Vec<u8>, String> {
@@ -355,9 +403,28 @@ mod tests {
     fn prerelease_is_older_than_release() {
         assert_eq!(version_cmp("1.2.0-rc1", "1.2.0").unwrap(), Ordering::Less);
         assert_eq!(version_cmp("1.2.0", "1.2.0-rc1").unwrap(), Ordering::Greater);
+    }
+
+    #[test]
+    fn prerelease_ordering_follows_semver() {
+        assert_eq!(version_cmp("1.2.0-rc1", "1.2.0-rc2").unwrap(), Ordering::Less);
         assert_eq!(
-            version_cmp("1.2.0-rc1", "1.2.0-rc2").unwrap(),
-            Ordering::Equal
+            version_cmp("1.0.0-alpha.1", "1.0.0-alpha.2").unwrap(),
+            Ordering::Less
+        );
+        // A shorter list that is a prefix of a longer one sorts first.
+        assert_eq!(
+            version_cmp("1.0.0-alpha", "1.0.0-alpha.1").unwrap(),
+            Ordering::Less
+        );
+        // Numeric identifiers sort before alphanumeric ones.
+        assert_eq!(
+            version_cmp("1.0.0-alpha.1", "1.0.0-alpha.beta").unwrap(),
+            Ordering::Less
+        );
+        assert_eq!(
+            version_cmp("1.0.0-beta", "1.0.0-rc1").unwrap(),
+            Ordering::Less
         );
     }
 
