@@ -56,8 +56,11 @@ pub fn load() -> Config {
 
 /// Write the config to disk, creating the directory on first save. The file
 /// is replaced atomically (temp file + rename), so a reader sees either the
-/// old or the new contents, never a torn write. Saving rewrites the file
-/// from the parsed config, so comments and unknown keys are not preserved.
+/// old or the new contents, never a torn write. No fsync: the panel saves
+/// on every nudge, and the rename already carries the atomicity guarantee;
+/// losing the last save to a crash is acceptable for a calibration offset.
+/// Saving rewrites the file from the parsed config, so comments and unknown
+/// keys are not preserved.
 pub fn save(cfg: &Config) -> std::io::Result<()> {
     let path = config_path();
     if let Some(parent) = path.parent() {
@@ -68,7 +71,6 @@ pub fn save(cfg: &Config) -> std::io::Result<()> {
     {
         let mut file = std::fs::File::create(&tmp)?;
         std::io::Write::write_all(&mut file, text.as_bytes())?;
-        file.sync_all()?;
     }
     std::fs::rename(&tmp, &path)
 }

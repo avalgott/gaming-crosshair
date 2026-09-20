@@ -38,8 +38,8 @@ pub fn run(report: crate::DaemonReport) -> gtk4::glib::ExitCode {
     let code = app.run_with_args::<&str>(&[]);
     // If a panel was already running, this instance's activate never fired
     // (the activation went to the primary); the panel is up by the time
-    // run() returns, so report ready here. In the primary the pipe is
-    // already closed and this is a harmless failed write.
+    // run() returns, so report ready here. In the primary the pipe was
+    // already reported on and this is a no-op.
     report.ready();
     code
 }
