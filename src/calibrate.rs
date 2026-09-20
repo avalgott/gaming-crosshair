@@ -38,9 +38,13 @@ pub fn run(report: crate::DaemonReport) -> gtk4::glib::ExitCode {
     let code = app.run_with_args::<&str>(&[]);
     // If a panel was already running, this instance's activate never fired
     // (the activation went to the primary); the panel is up by the time
-    // run() returns, so report ready here. In the primary the pipe was
+    // run() returns, so report ready here. Only on a successful run: a
+    // failure before activate (no display, for one) must surface as a
+    // startup error, not a false ready. In the primary the pipe was
     // already reported on and this is a no-op.
-    report.ready();
+    if code == gtk4::glib::ExitCode::SUCCESS {
+        report.ready();
+    }
     code
 }
 
