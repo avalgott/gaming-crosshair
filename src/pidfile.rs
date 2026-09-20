@@ -41,6 +41,25 @@ fn dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// Candidate directories for the PID and log files. --update (and --stop)
+/// may run in an environment that lost XDG_RUNTIME_DIR (cron, ssh,
+/// systemd-run), so probe every place a daemon could have put its PID
+/// file. /run/user/<uid> is the conventional runtime dir on systemd
+/// systems and covers the case where the daemon had XDG_RUNTIME_DIR and we
+/// do not; a non-standard XDG_RUNTIME_DIR in the daemon's environment
+/// cannot be guessed, and is the one gap.
+fn dirs() -> impl Iterator<Item = PathBuf> {
+    let uid = unsafe { libc::getuid() };
+    let mut dirs = Vec::with_capacity(3);
+    match std::env::var_os("XDG_RUNTIME_DIR") {
+        Some(runtime) => dirs.push(PathBuf::from(runtime)),
+        None => dirs.push(PathBuf::from(format!("/run/user/{uid}"))),
+    }
+    dirs.push(PathBuf::from(format!("/tmp/crosshair-{uid}")));
+    dirs.dedup();
+    dirs.into_iter()
+}
+
 /// Path of the PID file, resolved identically by --start and --stop.
 pub fn path() -> std::io::Result<PathBuf> {
     Ok(dir()?.join("crosshair.pid"))
@@ -93,8 +112,17 @@ pub fn claim() -> std::io::Result<PidLock> {
 }
 
 /// PID of a live running instance, or None. Stale PID files are removed.
+/// Every candidate directory is probed (see dirs).
 pub fn running_pid() -> Option<i32> {
-    let file = File::open(path().ok()?).ok()?;
+    dirs()
+        .map(|dir| dir.join("crosshair.pid"))
+        .find_map(|path| probe(&path))
+}
+
+/// Try one PID file path: None if it is absent, stale (nobody holds the
+/// flock), or records a dead PID. Stale files are removed.
+fn probe(path: &std::path::Path) -> Option<i32> {
+    let file = File::open(path).ok()?;
     let ret = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if ret == 0 {
         // Nobody holds the lock: the file is stale. Unlink while this
@@ -102,16 +130,14 @@ pub fn running_pid() -> Option<i32> {
         // have claimed this inode in the gap between our lock release and
         // the unlink (that gap would let us delete a fresh daemon's PID
         // file).
-        if let Ok(p) = path() {
-            let _ = std::fs::remove_file(p);
-        }
+        let _ = std::fs::remove_file(path);
         drop(file);
         return None;
     }
     // A daemon holds the lock. Its PID must be positive: 0 and negative
     // values are signal specials (kill(0) = our process group, kill(-1) =
     // every process we may signal) and must never leave the file.
-    let pid: i32 = std::fs::read_to_string(path().ok()?).ok()?.trim().parse().ok()?;
+    let pid: i32 = std::fs::read_to_string(path).ok()?.trim().parse().ok()?;
     if pid <= 0 || !is_alive(pid) {
         return None;
     }
@@ -127,11 +153,19 @@ fn is_alive(pid: i32) -> bool {
     std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
-/// --stop: SIGTERM the running instance, wait up to 2 s, report. Returns exit code.
-pub fn stop() -> i32 {
+/// Why the running instance could not be stopped.
+pub enum StopError {
+    NotRunning,
+    /// The daemon ignored SIGTERM for 2 s; carries its pid.
+    Timeout(i32),
+}
+
+/// SIGTERM the running instance and wait up to 2 s for it to exit. Shared
+/// by --stop and --update (which needs in-line control instead of an exit
+/// code).
+pub fn stop_daemon() -> Result<(), StopError> {
     let Some(pid) = running_pid() else {
-        eprintln!("crosshair is not running");
-        return 1;
+        return Err(StopError::NotRunning);
     };
     unsafe { libc::kill(pid, libc::SIGTERM) };
     for _ in 0..40 {
@@ -139,11 +173,27 @@ pub fn stop() -> i32 {
             if let Ok(p) = path() {
                 let _ = std::fs::remove_file(p);
             }
-            println!("crosshair stopped");
-            return 0;
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    eprintln!("crosshair: instance (pid {pid}) did not exit within 2 s");
-    1
+    Err(StopError::Timeout(pid))
+}
+
+/// --stop: SIGTERM the running instance, wait up to 2 s, report. Returns exit code.
+pub fn stop() -> i32 {
+    match stop_daemon() {
+        Ok(()) => {
+            println!("crosshair stopped");
+            0
+        }
+        Err(StopError::NotRunning) => {
+            eprintln!("crosshair is not running");
+            1
+        }
+        Err(StopError::Timeout(pid)) => {
+            eprintln!("crosshair: instance (pid {pid}) did not exit within 2 s");
+            1
+        }
+    }
 }

@@ -1,0 +1,38 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # upload release assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev meson ninja-build wayland-protocols pkg-config
+      - name: Build gtk4-layer-shell from source (not packaged in noble)
+        run: |
+          curl -fsSLo ls.tar.gz https://github.com/wmww/gtk4-layer-shell/archive/refs/tags/v1.0.4.tar.gz
+          tar xzf ls.tar.gz
+          meson setup build gtk4-layer-shell-1.0.4 --prefix=/usr \
+            -Dintrospection=false -Dvapi=false -Dexamples=false
+          sudo meson install -C build
+      - name: Build release binary
+        run: cargo build --release --locked
+      - name: Generate SHA-256 sidecar
+        # sha256sum embeds the path it was given; run from the binary's
+        # dir so the sidecar names only "crosshair" and install.sh can
+        # verify it with sha256sum -c.
+        run: (cd target/release && sha256sum crosshair > ../../crosshair.sha256)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/crosshair
+            crosshair.sha256
