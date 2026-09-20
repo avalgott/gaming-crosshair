@@ -171,29 +171,40 @@ fn daemonize() -> DaemonReport {
         }
     }
 
-    DaemonReport { fd: fds[1] }
+    DaemonReport {
+        fd: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(fds[1])),
+    }
 }
 
 /// Write end of the startup pipe: reports "R" (ready) or "E:<error>" to the
-/// waiting original process. Clone shares the same fd, so a second ready()
-/// after the first one closed it is a harmless failed write.
+/// waiting original process. The fd is taken (swap) and closed exactly once,
+/// no matter how many clones exist or how many times ready()/fail() is
+/// called, so a repeated call can never write to or close an unrelated fd
+/// that was reused in the meantime.
 #[derive(Clone)]
 struct DaemonReport {
-    fd: i32,
+    fd: std::sync::Arc<std::sync::atomic::AtomicI32>,
 }
 
 impl DaemonReport {
     fn ready(&self) {
-        let _ = unsafe { libc::write(self.fd, b"R".as_ptr() as *const _, 1) };
-        unsafe { libc::close(self.fd) };
+        let fd = self.fd.swap(-1, std::sync::atomic::Ordering::SeqCst);
+        if fd < 0 {
+            return;
+        }
+        let _ = unsafe { libc::write(fd, b"R".as_ptr() as *const _, 1) };
+        unsafe { libc::close(fd) };
     }
 
     fn fail(&self, msg: &str) -> ! {
-        let text = format!("E:{msg}");
-        let _ = unsafe {
-            libc::write(self.fd, text.as_ptr() as *const _, text.len())
-        };
-        unsafe { libc::close(self.fd) };
+        let fd = self.fd.swap(-1, std::sync::atomic::Ordering::SeqCst);
+        if fd >= 0 {
+            let text = format!("E:{msg}");
+            let _ = unsafe {
+                libc::write(fd, text.as_ptr() as *const _, text.len())
+            };
+            unsafe { libc::close(fd) };
+        }
         std::process::exit(1);
     }
 }
