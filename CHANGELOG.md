@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `crosshair --calibrate`: a small dark panel ("Crosshair Calibration")
+  that moves the dot with the arrow keys (Left/Right horizontal, Up/Down
+  vertical, 1 px per press) and draggable sliders under each offset row (up
+  to ±100 px). Every change saves the config and applies live on every
+  monitor. It runs detached like `--start`, so the terminal returns as
+  soon as the panel is up, and Esc closes the window, ending the process.
+  It starts the overlay automatically if none is running, so there is
+  always a dot to watch; closing the window leaves the crosshair on until
+  `crosshair --stop`. Reset recenters, and saving rewrites config.toml
+  from the parsed values (comments and unknown keys are not preserved).
+
 ## [v0.1.0] - 2026-09-19
 
 ### Summary

@@ -1,4 +1,5 @@
 mod backend;
+mod calibrate;
 mod cli;
 mod config;
 mod overlay;
@@ -10,6 +11,16 @@ use gtk4::gio::prelude::*;
 
 fn main() -> gtk4::glib::ExitCode {
     let cli = cli::Cli::parse();
+
+    if cli.calibrate {
+        // Detach like --start, so the terminal returns as soon as the panel
+        // is up. The panel is then its own process: Esc (or the close
+        // button) closes the window, the application quits, and the process
+        // ends itself. Startup errors reach the terminal the same way
+        // --start's do, through the readiness report.
+        let report = daemonize();
+        return calibrate::run(report);
+    }
 
     if cli.stop {
         std::process::exit(pidfile::stop());
@@ -164,7 +175,9 @@ fn daemonize() -> DaemonReport {
 }
 
 /// Write end of the startup pipe: reports "R" (ready) or "E:<error>" to the
-/// waiting original process.
+/// waiting original process. Clone shares the same fd, so a second ready()
+/// after the first one closed it is a harmless failed write.
+#[derive(Clone)]
 struct DaemonReport {
     fd: i32,
 }

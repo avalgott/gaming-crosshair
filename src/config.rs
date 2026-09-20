@@ -1,12 +1,12 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
     pub dot: DotConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct DotConfig {
     pub size: u32,
@@ -28,14 +28,6 @@ impl Default for DotConfig {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            dot: DotConfig::default(),
-        }
-    }
-}
-
 fn config_dir() -> std::path::PathBuf {
     if let Some(dir) = std::env::var_os("XDG_CONFIG_HOME") {
         return std::path::PathBuf::from(dir);
@@ -44,8 +36,12 @@ fn config_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".config")
 }
 
+fn config_path() -> std::path::PathBuf {
+    config_dir().join("crosshair").join("config.toml")
+}
+
 pub fn load() -> Config {
-    let path = config_dir().join("crosshair").join("config.toml");
+    let path = config_path();
     match std::fs::read_to_string(&path) {
         Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
             eprintln!(
@@ -56,6 +52,25 @@ pub fn load() -> Config {
         }),
         Err(_) => Config::default(),
     }
+}
+
+/// Write the config to disk, creating the directory on first save. The file
+/// is replaced atomically (temp file + rename), so a reader sees either the
+/// old or the new contents, never a torn write. Saving rewrites the file
+/// from the parsed config, so comments and unknown keys are not preserved.
+pub fn save(cfg: &Config) -> std::io::Result<()> {
+    let path = config_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = toml::to_string_pretty(cfg).map_err(std::io::Error::other)?;
+    let tmp = path.with_file_name("config.toml.tmp");
+    {
+        let mut file = std::fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut file, text.as_bytes())?;
+        file.sync_all()?;
+    }
+    std::fs::rename(&tmp, &path)
 }
 
 /// Parse "#rrggbb" or "#rgb" into 0..1 channel floats. Returns None on bad input.

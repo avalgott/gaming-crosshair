@@ -6,15 +6,17 @@ BenQ, LG). It floats above all windows, is fully click-through, never takes
 focus, and works on any Linux distribution.
 
 ```
-crosshair --start   # show the dot on every monitor — runs in the background
-crosshair --stop    # remove it
+crosshair --start     # show the dot on every monitor — runs in the background
+crosshair --calibrate # move the dot live with the arrow keys
+crosshair --stop      # remove it
 ```
 
 `--start` double-forks into the background: the terminal returns
-immediately and Ctrl+C has nothing to kill. `crosshair --stop` (from any
-terminal) is the off switch. Startup errors are still shown in the
-terminal; later diagnostics go to `$XDG_RUNTIME_DIR/crosshair.log` (fallback
-`/tmp/crosshair-<uid>.log`).
+immediately and Ctrl+C has nothing to kill. `--calibrate` detaches the
+same way — the panel is its own process, and Esc (or the close button)
+ends it. `crosshair --stop` (from any terminal) is the off switch.
+Startup errors are still shown in the terminal; later diagnostics go to
+`$XDG_RUNTIME_DIR/crosshair.log` (fallback `/tmp/crosshair-<uid>.log`).
 
 The dot is 4×4 px, pure white, configurable via
 `~/.config/crosshair/config.toml`:
@@ -27,8 +29,10 @@ offset_x = 0        # nudge off center: positive = right, in logical px
 offset_y = 0        # positive = down
 ```
 
-Missing or invalid config files fall back to the defaults above. Nothing is
-ever written to disk.
+Missing or invalid config files fall back to the defaults above. `--start`
+and `--stop` never write to disk; `--calibrate` saves the config, rewriting
+the file from the parsed values, so comments and unknown keys in a
+hand-edited file are not preserved.
 
 ## Tuning the dot position
 
@@ -49,6 +53,21 @@ kill -USR1 $(cat $XDG_RUNTIME_DIR/crosshair.pid)   # or: pkill -USR1 crosshair
 
 Offsets are signed, in logical pixels, relative to the (already corrected)
 screen center, and apply to every monitor.
+
+## Calibrating the dot
+
+`crosshair --calibrate` opens a small window for nudging the dot into place:
+
+- Left/Right move the dot horizontally, Up/Down vertically, one logical
+  pixel per press (hold a key to keep moving).
+- Drag the slider under an offset row to set it directly (up to ±100 px);
+  the arrow keys reach the full ±2000 range.
+- Changes save and apply live, no restart or manual `kill -USR1` needed.
+- If the overlay is not running, it starts automatically, so there is always
+  a dot to watch. Closing the window leaves the crosshair on; use
+  `crosshair --stop` to remove it.
+- Reset puts the dot back at the true screen center. Esc closes the window,
+  which ends the panel process.
 
 ## Requirements
 
