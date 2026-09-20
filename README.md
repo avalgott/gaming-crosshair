@@ -1,104 +1,91 @@
 # crosshair
 
-A tiny standalone overlay that draws a white dot at the exact center of every
-screen — like the built-in crosshairs on gaming monitors (ASUS GamePlus,
-BenQ, LG). It floats above all windows, is fully click-through, never takes
-focus, and works on any Linux distribution.
+A tiny overlay that puts a white dot at the exact center of every screen,
+like the built-in crosshairs on gaming monitors (ASUS GamePlus, BenQ, LG).
+It floats above everything, fullscreen games included, never steals focus,
+and clicks pass straight through to whatever is underneath. Works on any
+Linux distribution.
 
 ```
-crosshair --start     # show the dot on every monitor — runs in the background
-crosshair --calibrate # move the dot live with the arrow keys
-crosshair --update    # self-update to the latest release
+crosshair --start     # show the dot on every monitor, runs in the background
+crosshair --calibrate # open the panel and move the dot live
+crosshair --update    # update to the latest release
 crosshair --stop      # remove it
 ```
 
-`--start` double-forks into the background: the terminal returns
-immediately and Ctrl+C has nothing to kill. `--calibrate` detaches the
-same way — the panel is its own process, and Esc (or the close button)
-ends it. `--update` replaces the binary with the latest GitHub release
-(checksum-verified) — see [Install](#install). `crosshair --stop` (from
-any terminal) is the off switch.
-Startup errors are still shown in the terminal; later diagnostics go to
-`$XDG_RUNTIME_DIR/crosshair.log` (fallback `/tmp/crosshair-<uid>.log`).
+`--start` runs in the background: the terminal returns right away and
+Ctrl+C has nothing to kill. `--calibrate` detaches the same way and opens
+a small panel; Esc (or the close button) ends it. `crosshair --stop` from
+any terminal turns everything off. Startup problems still print in the
+terminal; anything that happens later goes to
+`$XDG_RUNTIME_DIR/crosshair.log` (or `/tmp/crosshair-<uid>.log`).
 
-The dot is 4×4 px, pure white, configurable via
+## Calibrating the crosshair
+
+The dot starts at the true center of every monitor, even on desktops with
+a status bar. If it does not line up with the crosshair you care about
+(in-game HUDs are rarely at the exact pixel center), open the panel:
+
+```
+crosshair --calibrate
+```
+
+- Use the keyboard arrow keys: Left/Right move the dot horizontally,
+  Up/Down vertically, one pixel per press (hold a key to keep going).
+- Drag the sliders under each row to set an offset directly (up to ±100
+  px); the arrow keys reach the full ±2000 range.
+- Every change saves and applies instantly, no restart needed.
+- If the overlay is not running, the panel starts it for you, so there is
+  always a dot to watch. Closing the panel leaves the crosshair on; run
+  `crosshair --stop` to remove it.
+- Reset puts the dot back at the true center.
+
+## Configuring the dot
+
+You can also change the dot by hand, in
 `~/.config/crosshair/config.toml`:
 
 ```toml
 [dot]
 size = 4            # 2..64 px (even sizes center symmetrically)
 color = "#ffffff"   # #rgb or #rrggbb
-offset_x = 0        # nudge off center: positive = right, in logical px
+offset_x = 0        # positive = right, in logical px
 offset_y = 0        # positive = down
 ```
 
-Missing or invalid config files fall back to the defaults above. `--start`
-and `--stop` never write to disk; `--calibrate` saves the config, rewriting
-the file from the parsed values, so comments and unknown keys in a
-hand-edited file are not preserved.
-
-## Tuning the dot position
-
-The dot is drawn at the **true screen center**. On compositors with a status
-bar (Hyprland, sway, KDE…) the layer surface does not span the bar, so the
-app corrects the bar offset automatically: it knows the monitor size and the
-surface size, and the difference is exactly the bar height. No bar ⇒ no
-correction.
-
-If the dot still doesn't line up with the crosshair you care about (in-game
-HUDs are rarely at the exact pixel center), nudge it with `offset_x` /
-`offset_y` — no restart needed, changes apply live:
-
-```bash
-$EDITOR ~/.config/crosshair/config.toml   # tweak offsets
-kill -USR1 $(cat $XDG_RUNTIME_DIR/crosshair.pid)   # or: pkill -USR1 crosshair
-```
-
-Offsets are signed, in logical pixels, relative to the (already corrected)
-screen center, and apply to every monitor.
-
-## Calibrating the dot
-
-`crosshair --calibrate` opens a small window for nudging the dot into place:
-
-- Left/Right move the dot horizontally, Up/Down vertically, one logical
-  pixel per press (hold a key to keep moving).
-- Drag the slider under an offset row to set it directly (up to ±100 px);
-  the arrow keys reach the full ±2000 range.
-- Changes save and apply live, no restart or manual `kill -USR1` needed.
-- If the overlay is not running, it starts automatically, so there is always
-  a dot to watch. Closing the window leaves the crosshair on; use
-  `crosshair --stop` to remove it.
-- Reset puts the dot back at the true screen center. Esc closes the window,
-  which ends the panel process.
+Missing or invalid files fall back to the defaults above. The overlay
+reads the file when it starts, so edit it before `crosshair --start`, or
+use the panel for live changes. `--start` and `--stop` never write to
+disk; `--calibrate` saves the config, rewriting the file from the parsed
+values, so comments and unknown keys in a hand-edited file are not
+preserved.
 
 ## Install
 
-Paste this into a terminal — no sudo, everything installs as your user:
+Paste this into a terminal. No sudo, everything installs as your user:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/avalgott/gaming-crosshair/main/install.sh | sh
 ```
 
-The script downloads the CI-built binary of the latest release to
-`~/.local/bin` (set `CROSSHAIR_INSTALL_DIR` to pick another directory),
-verifies its SHA-256 checksum, and smoke-tests it. If `~/.local/bin` is
-not on your PATH it says so — add it with
-`export PATH="$HOME/.local/bin:$PATH"` if you want plain `crosshair` to
-work. It is a small script; download and read it before piping if you
-prefer.
+The script downloads the latest release, checks its SHA-256 checksum, and
+installs the binary to `~/.local/bin` (set `CROSSHAIR_INSTALL_DIR` to pick
+another directory). If `~/.local/bin` is not on your PATH it says so, with
+the one-liner to fix it. It is a small script; download and read it before
+piping if you prefer.
 
-To update to the latest release at any time:
+Update whenever you like:
 
 ```
 crosshair --update
 ```
 
-It downloads the new binary, verifies its checksum, and atomically
-replaces itself; a running overlay is stopped and restarted
-automatically. The calibration panel also shows an "Update available"
-link when a newer release exists — and nothing at all otherwise
-(offline, GitHub down, already current).
+It downloads the new version, verifies the checksum, and swaps itself in
+place. A running overlay is stopped and restarted automatically, and if
+the new version fails to start, the previous one is rolled back. The
+calibration panel also shows an "Update available" link when a newer
+release exists, and nothing at all otherwise (offline, GitHub down,
+already current).
 
 To remove crosshair completely:
 
@@ -106,68 +93,53 @@ To remove crosshair completely:
 curl -fsSL https://raw.githubusercontent.com/avalgott/gaming-crosshair/main/uninstall.sh | sh
 ```
 
-Stops the overlay, removes the binary and `~/.config/crosshair`
+It stops the overlay and removes the binary and `~/.config/crosshair`
 (`XDG_CONFIG_HOME` is honored).
 
-The prebuilt binary needs a system GTK4 (≥ 4.10) and gtk4-layer-shell —
-the same runtime libraries the source build needs — and glibc ≥ 2.39 on
+The prebuilt binary needs system GTK4 (≥ 4.10) and gtk4-layer-shell, the
+same runtime libraries the source build needs, and glibc ≥ 2.39 on
 x86_64 (CI builds on Ubuntu 24.04).
+
+## Compatibility
+
+crosshair picks the right backend automatically:
+
+- Wayland on wlroots (Hyprland, sway), KDE and Mir: the dot sits on the
+  overlay layer, above every window including fullscreen games.
+- GNOME Wayland: above desktop apps, but not above native fullscreen
+  windows (a GNOME Shell limitation; a shell extension could fix this
+  later).
+- Xorg: a fullscreen window kept above everything. Games running in
+  XWayland need the X11 backend forced: `GDK_BACKEND=x11 crosshair
+  --start`.
+
+In every mode the overlay ignores input completely, so clicks, keys and
+scroll pass straight through, and it never takes focus.
+
+Two small caveats: plug in a new monitor and you need to restart
+crosshair to pick it up, and at fractional scaling (125%, 150%...) the
+dot edges look slightly soft. Both acceptable.
 
 ## Building from source
 
-- Rust toolchain ≥ 1.92
-- GTK4 (≥ 4.22 tested) and gtk4-layer-shell (≥ 1.3 tested), both provided by
-  the system package manager
+Prefer the installer above? Skip this. Otherwise you need Rust ≥ 1.92 and
+the system GTK4 and gtk4-layer-shell libraries:
 
 ```bash
 cargo build --release
 cargo install --path .        # optional: puts `crosshair` on your PATH
 ```
 
-## How it works
+## Support
 
-| Backend | When | How |
-|---|---|---|
-| Layer shell | Wayland on wlroots (Hyprland/sway), KDE, Mir | `zwlr_layer_shell_v1` overlay layer, one fullscreen transparent surface per monitor. Above every window, including fullscreen ones. |
-| XDG fallback | GNOME Wayland (Mutter has no layer shell) | One fullscreen transparent window per monitor — above desktop apps, but not above native fullscreen windows (GNOME limitation) |
-| X11 | Xorg, or XWayland games | One fullscreen window per monitor + `_NET_WM_STATE_ABOVE` + direct restack every 2 s + empty XShape input region + `WM_HINTS input=false` (never takes focus) |
+If crosshair makes your aim a little truer and you'd like to support
+ongoing development and future releases, consider buying me a coffee. It
+genuinely helps keep the project going.
 
-Backend detection is automatic. To force the X11 backend (e.g. for games
-running in XWayland): `GDK_BACKEND=x11 crosshair --start`.
+<a href="https://buymeacoffee.com/avalgott">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+       height="50"
+       alt="Buy Me A Coffee">
+</a>
 
-In every mode the surface has an empty input region — clicks, keys and scroll
-pass straight through to whatever is underneath, and the window never takes
-focus.
-
-## Known limitations
-
-- **GNOME Wayland**: no layer shell, so the dot does not appear over native
-  fullscreen windows (games). A GNOME Shell extension could fix this later.
-- **X11 mode on a Wayland compositor**: the X11 window stays above other X11
-  windows (games in XWayland) but Wayland-native apps can cover it. Use the
-  default layer-shell mode for Wayland apps.
-- **Hyprland's XWM** ignores the `_NET_WM_STATE_ABOVE` request on fullscreen
-  XWayland windows; the app compensates with a direct restack every 2 s.
-- No monitor hotplug handling (restart to pick up a new monitor), and at
-  fractional scales the dot edges are antialiased — both acceptable for now.
-- The automatic bar correction is exact for a top bar (the common case) and
-  does nothing when there is no bar; a bottom or side bar leaves a small
-  residual that the user offsets absorb.
-
-## Verification (Hyprland 0.56, NVIDIA RTX 5080)
-
-- Layer surfaces land on overlay level 3 on all monitors, anchored below the
-  bar; the dot's pixels sit at each monitor's **true screen center** — the
-  bar offset is corrected automatically (verified by screenshot pixel
-  analysis at scales 1.25 and 1.6; eDP-2 lands within ~1 native px, the
-  fractional-scale rasterization bias)
-- User offsets + live reload: SIGUSR1 re-reads the config and redraws
-  without a restart — verified on Hyprland (dot jumped by exactly the
-  configured offset on all monitors, then back)
-- Click-through verified on X11 by reading the window's input shape back
-  (0 rectangles); on Wayland the same GDK call maps to
-  `wl_surface.set_input_region(empty)`
-- `--start` returns in ~30 ms (daemonized) and shows the dot; `--start`
-  twice → "already running", exit 1; `--stop` from any terminal → exit 0,
-  PID file removed; `--stop` with nothing running → exit 1; SIGTERM → clean
-  exit, PID file removed
+Bug reports, feature suggestions, and contributions are always appreciated.
