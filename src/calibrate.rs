@@ -28,7 +28,12 @@ pub fn run(report: crate::DaemonReport) -> gtk4::glib::ExitCode {
                 report.ready();
                 return;
             }
-            ensure_daemon();
+            // The overlay was started before the fork; re-check in case it
+            // died in between, and fail the report rather than show a
+            // panel with no dot to watch.
+            if let Err(e) = ensure_daemon() {
+                report.fail(&format!("could not start the overlay: {e}"));
+            }
             build_window(app);
             report.ready();
         }
@@ -52,28 +57,23 @@ pub fn run(report: crate::DaemonReport) -> gtk4::glib::ExitCode {
 /// path (double fork, readiness report, pidfile); this process waits for
 /// the spawned parent to report back, which it only does once the daemon
 /// holds the PID file, so the first nudge always signals a live daemon.
-fn ensure_daemon() {
+/// Start the overlay if it is not running. Re-uses the normal `--start`
+/// path (double fork, readiness report, pidfile); this process waits for
+/// the spawned parent to report back, which it only does once the daemon
+/// holds the PID file. Returns the failure detail when the overlay cannot
+/// start; the panel then refuses to run, since it would have no dot to
+/// watch.
+pub(crate) fn ensure_daemon() -> Result<(), String> {
     if crate::pidfile::running_pid().is_some() {
-        return;
+        return Ok(());
     }
-    let exe = match std::env::current_exe() {
-        Ok(exe) => exe,
-        Err(e) => {
-            eprintln!("crosshair: cannot locate the binary to start the overlay: {e}");
-            return;
-        }
-    };
+    let exe = std::env::current_exe()
+        .map_err(|e| format!("cannot locate the binary to start the overlay: {e}"))?;
     // Stdio is inherited, so --start failures print here normally.
     match std::process::Command::new(exe).arg("--start").status() {
-        Ok(status) if status.success() => {}
-        Ok(status) => eprintln!(
-            "crosshair: could not start the overlay (--start exited with {status}); \
-             offsets are saved and apply on the next --start"
-        ),
-        Err(e) => eprintln!(
-            "crosshair: could not start the overlay: {e}; \
-             offsets are saved and apply on the next --start"
-        ),
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("--start exited with {status}")),
+        Err(e) => Err(format!("cannot spawn --start: {e}")),
     }
 }
 
@@ -102,8 +102,8 @@ fn build_window(app: &gtk4::Application) {
 
     let label_x = value_label(cfg.dot.offset_x);
     let label_y = value_label(cfg.dot.offset_y);
-    let scale_x = slider();
-    let scale_y = slider();
+    let scale_x = slider("Horizontal offset");
+    let scale_y = slider("Vertical offset");
 
     let controls = Rc::new(Controls {
         label_x: label_x.clone(),
@@ -287,13 +287,16 @@ fn value_label(offset: i32) -> gtk4::Label {
 
 /// The sliders cover ±100 px (fine calibration); arrows reach the full
 /// ±2000 range. Not focusable, so the arrow keys always nudge the offsets
-/// instead of being captured by the scale's own key handling.
-fn slider() -> gtk4::Scale {
+/// instead of being captured by the scale's own key handling. The
+/// accessible label names the axis, so assistive technology can tell the
+/// two sliders apart.
+fn slider(axis: &'static str) -> gtk4::Scale {
     let scale = gtk4::Scale::with_range(gtk4::Orientation::Horizontal, -100.0, 100.0, 1.0);
     scale.set_draw_value(false);
     scale.set_round_digits(0);
     scale.set_hexpand(true);
     scale.set_focusable(false);
+    scale.update_property(&[gtk4::accessible::Property::Label(axis)]);
     scale
 }
 
@@ -320,12 +323,14 @@ fn slider_changed(scale: &gtk4::Scale, controls: &Controls, axis: Axis) {
     }
 }
 
-/// Move one axis by `delta` logical pixels.
+/// Move one axis by `delta` logical pixels. Saturating: the config can
+/// hold arbitrary i32 values, and wrapping addition would teleport the dot
+/// across the range before commit() clamps.
 fn step(controls: &Controls, axis: Axis, delta: i32) {
     let (x, y) = controls.current.get();
     match axis {
-        Axis::X => commit(controls, x + delta, y),
-        Axis::Y => commit(controls, x, y + delta),
+        Axis::X => commit(controls, x.saturating_add(delta), y),
+        Axis::Y => commit(controls, x, y.saturating_add(delta)),
     }
 }
 
@@ -338,6 +343,16 @@ fn commit(controls: &Controls, offset_x: i32, offset_y: i32) {
     cfg.dot.offset_y = offset_y.clamp(-2000, 2000);
     if let Err(e) = crate::config::save(&cfg) {
         eprintln!("crosshair: cannot save config: {e}");
+        // Snap the knobs back to the last committed offsets: a failed save
+        // must not leave a drag showing a value that was never applied.
+        controls.syncing.set(true);
+        controls
+            .scale_x
+            .set_value(controls.current.get().0 as f64);
+        controls
+            .scale_y
+            .set_value(controls.current.get().1 as f64);
+        controls.syncing.set(false);
         return;
     }
     controls

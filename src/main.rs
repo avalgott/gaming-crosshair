@@ -13,6 +13,14 @@ fn main() -> gtk4::glib::ExitCode {
     let cli = cli::Cli::parse();
 
     if cli.calibrate {
+        // Start the overlay before detaching: --start can take a few
+        // seconds on a slow machine, and letting it run inside the panel's
+        // own readiness window could exhaust the deadline. A failure here
+        // ends the command with the error visible in the terminal.
+        if let Err(e) = calibrate::ensure_daemon() {
+            eprintln!("crosshair: could not start the overlay: {e}");
+            std::process::exit(1);
+        }
         // Detach like --start, so the terminal returns as soon as the panel
         // is up. The panel is then its own process: Esc (or the close
         // button) closes the window, the application quits, and the process
